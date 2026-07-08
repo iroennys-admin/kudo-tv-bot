@@ -2212,6 +2212,29 @@ async def ver_referidos_callback(client, callback_query):
 async def start_background_tasks():
     asyncio.create_task(reset_limits_and_check_expiration())
 
+# Health check HTTP server para Render (web service en free tier necesita un puerto)
+def run_health_server():
+    import http.server
+    import socketserver
+
+    PORT = int(os.getenv("PORT", "8080"))
+
+    class HealthHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        def log_message(self, format, *args):
+            pass  # silence logs
+
+    with socketserver.TCPServer(("0.0.0.0", PORT), HealthHandler) as httpd:
+        httpd.serve_forever()
+
+
+import threading
+threading.Thread(target=run_health_server, daemon=True).start()
 print("Estoy online")
 
 # Iniciar el bot con las tareas en segundo plano
