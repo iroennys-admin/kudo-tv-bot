@@ -2,3 +2,5 @@
 .atl/
 .env
 kudo_tv.db
+__pycache__/
+*.pyc
