@@ -2212,26 +2212,10 @@ async def ver_referidos_callback(client, callback_query):
 async def start_background_tasks():
     asyncio.create_task(reset_limits_and_check_expiration())
 
-async def health_check_server():
-    """Minimal HTTP health check for Render."""
-    PORT = int(os.getenv("PORT", "10000"))
-
-    async def handle(reader, writer):
-        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK")
-        await writer.drain()
-        writer.close()
-
-    server = await asyncio.start_server(handle, "0.0.0.0", PORT)
-    logger.info(f"Health check server on port {PORT}")
-    async with server:
-        await server.serve_forever()
-
-
 print("Estoy online")
 
 # Iniciar el bot con las tareas en segundo plano
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(start_background_tasks())
-    loop.create_task(health_check_server())
     app.run()
