@@ -1,0 +1,4 @@
+# Local Pi runtime state
+.atl/
+.env
+kudo_tv.db
