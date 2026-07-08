@@ -7,6 +7,27 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN chmod +x start.sh
+EXPOSE 10000
 
-CMD ["./start.sh"]
+CMD python3 -c "
+import os, socket as s, threading
+
+PORT = int(os.getenv('PORT', '10000'))
+resp = b'HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK'
+
+def serve():
+    sock = s.socket(s.AF_INET, s.SOCK_STREAM)
+    sock.setsockopt(s.SOL_SOCKET, s.SO_REUSEADDR, 1)
+    sock.bind(('0.0.0.0', PORT))
+    sock.listen(5)
+    while True:
+        conn, _ = sock.accept()
+        conn.recv(1024)
+        conn.sendall(resp)
+        conn.close()
+
+threading.Thread(target=serve, daemon=True).start()
+
+import runpy
+runpy.run_path('bot.py', run_name='__main__')
+"
