@@ -2,5 +2,8 @@
 .atl/
 .env
 kudo_tv.db
+kudo_tv.db-*
 __pycache__/
 *.pyc
+pelis_bot.session*
+*.log

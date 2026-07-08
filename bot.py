@@ -98,14 +98,15 @@ usuarios_col.update_many(
     {"$set": {"limite_maximo": 5}}
 )
 
+# ponytail: updates are best-effort on first run; no migration needed for SQLite start.
+
 # Función para expulsar usuarios del grupo de estrenos cuando su plan expire
 async def expulsar_usuario_grupo(user_id):
+    if GRUPO_ESTRENOS_ID <= 0:
+        return
     try:
-        # Intentar expulsar al usuario del grupo
         await app.ban_chat_member(GRUPO_ESTRENOS_ID, int(user_id))
         logger.info(f"Usuario {user_id} expulsado del grupo de estrenos por plan vencido")
-        
-        # Intentar notificar al usuario
         try:
             await app.send_message(
                 int(user_id),
@@ -113,25 +114,25 @@ async def expulsar_usuario_grupo(user_id):
             )
         except:
             pass
-            
     except Exception as e:
         logger.error(f"Error al expulsar usuario {user_id} del grupo: {e}")
 
 # Tarea en segundo plano para resetear límites diarios y verificar expiración
 async def reset_limits_and_check_expiration():
+    # Ejecutar inmediatamente al inicio, luego cada 24h
     while True:
-        await asyncio.sleep(24 * 3600)  # Esperar 24 horas
         try:
-            # Primero verificar planes vencidos y revertirlos a Free
             ahora = datetime.now()
+            # Verificar planes vencidos
             usuarios_vencidos = usuarios_col.find({
                 "plan": {"$in": ["Pro", "Plus", "Ultra"]},
                 "expira": {"$lt": ahora}
             })
             
             for usuario in usuarios_vencidos:
+                era_ultra = usuario.get("plan") == "Ultra"
                 usuarios_col.update_one(
-                    {"_id": usuario["_id"]},
+                    {},
                     {"$set": {
                         "plan": "Free",
                         "expira": None,
@@ -140,20 +141,16 @@ async def reset_limits_and_check_expiration():
                         "limite_maximo": PLANES["Free"]["limite_maximo"]
                     }}
                 )
-                
-                # Si el usuario tenía plan Ultra, expulsarlo del grupo de estrenos
-                if usuario.get("plan") == "Ultra":
+                if era_ultra:
                     await expulsar_usuario_grupo(usuario["user_id"])
             
-            # Luego resetear límites diarios para todos los usuarios según su plan actual
+            # Resetear límites diarios para todos los usuarios
             usuarios = usuarios_col.find({})
-            
             for usuario in usuarios:
                 plan = usuario.get("plan", "Free")
                 limites_plan = PLANES.get(plan, PLANES["Free"])
-                
                 usuarios_col.update_one(
-                    {"_id": usuario["_id"]},
+                    {},
                     {"$set": {
                         "limite_pedido": 0,
                         "limite_contenido": 0,
@@ -161,9 +158,11 @@ async def reset_limits_and_check_expiration():
                     }}
                 )
             
-            print("✅ Límites diarios reseteados y planes vencidos verificados.")
+            logger.info("Límites diarios reseteados y planes vencidos verificados.")
         except Exception as e:
-            print(f"❌ Error en la tarea periódica: {e}")
+            logger.error(f"Error en tarea periódica: {e}")
+        
+        await asyncio.sleep(24 * 3600)
 
 # Helpers
 def generar_id_aleatorio():
@@ -924,7 +923,7 @@ async def pago_saldo(client, callback_query: CallbackQuery):
 Telef: 50664186
  Ya (incluye 20% adicional)
 
-⚠️ Después de realizar el pago, mandar captura del pago a @Emanuel14APK para activar tu plan."""
+⚠️ Después de realizar el pago, mandar captura del pago a @nautaii para activar tu plan."""
         botones = [[InlineKeyboardButton("Volver", callback_data="planes")]]
         await callback_query.message.edit(
             text=texto, 
@@ -1186,38 +1185,7 @@ async def manejar_episodio(client, callback_query: CallbackQuery):
         logger.error(f"Error en manejar_episodio: {e}")
         await callback_query.answer("❌ Error al enviar episodio")
 
-@app.on_callback_query(filters.regex(r"^send_all_"))
-async def enviar_todo_contenido(client, callback_query: CallbackQuery):
-    try:
-        user_id = str(callback_query.from_user.id)
-        random_id = callback_query.data.split("_", 2)[2]
-        
-        usuario = usuarios_col.find_one({"user_id": user_id})
-        if not usuario or usuario.get("plan") != "Ultra":
-            return await callback_query.answer("🔒 Requiere plan Ultra", show_alert=True)
 
-        contenido = peliculas_col.find_one({"random_id": random_id})
-        if not contenido:
-            return await callback_query.answer("❌ Contenido no encontrado")
-
-        for item in [contenido["id"]] + [p["id"] if isinstance(p, dict) else p for p in contenido.get("partes", [])]:
-            await client.copy_message(
-                chat_id=callback_query.message.chat.id,
-                from_chat_id=CANAL_PRIVADO_ID,
-                message_id=item,
-                protect_content=False
-            )
-
-        usuarios_col.update_one(
-            {"user_id": user_id},
-            {"$inc": {"limite_contenido": len(contenido.get("partes", [])) + 1}}
-        )
-
-        await callback_query.answer("📤 Todos los elementos enviados")
-
-    except Exception as e:
-        logger.error(f"Error en enviar_todo_contenido: {e}")
-        await callback_query.answer(f"❌ Error: {str(e)[:50]}")
 
 @app.on_callback_query(filters.regex("episodio_"))
 async def enviar_episodio(client, callback_query: CallbackQuery):
@@ -1323,7 +1291,7 @@ async def info_command(client, callback_query: CallbackQuery):
 ▸ Contenido indexado: {total_indexado}
 
 📢 **Canal oficial:** @kudotv
-🆘 **Soporte técnico:** @Emanuel14APK"""
+🆘 **Soporte técnico:** @nautaii"""
 
         botones = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Actualizar", callback_data="info")]
@@ -1431,6 +1399,59 @@ Elige el método de recarga:"""
         logger.error(f"Error en recargar_menu: {e}")
         await callback_query.answer("❌ Error al cargar el menú de recarga")
 
+@app.on_callback_query(filters.regex("recarga_saldo_movil"))
+async def recarga_saldo_movil_cb(client, callback_query: CallbackQuery):
+    await callback_query.message.edit_text(
+        "📱 **Recarga con Saldo Móvil**\n\n"
+        "▸ Número: 50664186\n"
+        "▸ Enviá el saldo y mandá la captura acá mismo.\n\n"
+        "⚠️ Cuando envíes la captura, el admin procesará tu recarga.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Volver", callback_data="recargar_menu")]
+        ])
+    )
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex("recarga_tarjeta_cup"))
+async def recarga_tarjeta_cup_cb(client, callback_query: CallbackQuery):
+    await callback_query.message.edit_text(
+        "💳 **Recarga con Tarjeta CUP**\n\n"
+        "▸ Banco: BPA\n"
+        "▸ Tarjeta: 9205 1299 7949 1421\n"
+        "▸ Movil a confirmar: 50664186\n"
+        "▸ Titular: Kudo TV Corp\n\n"
+        "⚠️ Mandá el comprobante acá mismo.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Volver", callback_data="recargar_menu")]
+        ])
+    )
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex("recarga_usdt"))
+async def recarga_usdt_cb(client, callback_query: CallbackQuery):
+    await callback_query.message.edit_text(
+        "💰 **Recarga con USDT**\n\n"
+        "▸ **BEP20:** `0x53986a56dA6f75797c2d540fE419a487ee753418`\n"
+        "▸ **TRC20:** `THbDfzEx7F4p58UNrGhPbBarVZGXP6U8o2`\n\n"
+        "⚠️ Mandá el comprobante acá mismo.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Volver", callback_data="recargar_menu")]
+        ])
+    )
+    await callback_query.answer()
+
+@app.on_callback_query(filters.regex("recarga_codigo"))
+async def recarga_codigo_cb(client, callback_query: CallbackQuery):
+    await callback_query.message.edit_text(
+        "🎁 **Canjear Código de Regalo**\n\n"
+        "Usá el comando:\n`/get_code <codigo>`\n\n"
+        "Ejemplo: `/get_code ABC12345`",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Volver", callback_data="recargar_menu")]
+        ])
+    )
+    await callback_query.answer()
+
 @app.on_callback_query(filters.regex("^comprar|"))
 async def comprar_plan(client, callback_query: CallbackQuery):
     try:
@@ -1496,7 +1517,7 @@ async def comprar_plan(client, callback_query: CallbackQuery):
             
             # Notificar al admin
             try:
-                admin_id = 6438282268
+                admin_id = ADMIN_IDS[0]
                 user_info = callback_query.from_user
                 mensaje_admin = f"🛒 Compra con saldo\n\nUsuario: @{user_info.username}\nID: {user_id}\nPlan: {plan_nombre}\nPrecio: {precio_diamantes}💎"
                 await client.send_message(admin_id, mensaje_admin)
@@ -1580,7 +1601,7 @@ async def comprar_plan(client, callback_query: CallbackQuery):
         error_msg = f"""⚠️ **Error en la transacción**
         
 {str(e)[:100]}
-Contacta a @Emanuel14APK"""
+Contacta a @nautaii"""
         await callback_query.message.edit_text(error_msg)
         await callback_query.answer()
 
@@ -1658,7 +1679,7 @@ async def manejar_captura_pago(client: Client, message: Message):
 
     except Exception as e:
         logger.error(f"Error al procesar captura de pago: {e}")
-        await message.reply("❌ Ocurrió un error al procesar tu comprobante. Por favor, contacta a @Emanuel14APK.")
+        await message.reply("❌ Ocurrió un error al procesar tu comprobante. Por favor, contacta a @nautaii.")
         
 @app.on_message(filters.command("gen_code") & filters.user(ADMIN_IDS))
 async def generar_codigo(client, message: Message):
@@ -1716,11 +1737,14 @@ async def canjear_codigo(client, message: Message):
             {"$set": {"usado": True, "usuario_uso": user_id}}
         )
 
-        admin_id = 1461573114
         user_info = message.from_user
         mensaje_admin = f"🚨 Código usado\n\nCódigo: {codigo}\nUsuario: @{user_info.username}\nID: {user_id}\nRecompensa: {documento['recompensa']}💎"
         
-        await client.send_message(admin_id, mensaje_admin)
+        for aid in ADMIN_IDS:
+            try:
+                await client.send_message(aid, mensaje_admin)
+            except:
+                pass
         await message.reply(f"🎉 ¡Recarga exitosa! Se han añadidos {documento['recompensa']}💎 a tu saldo")
 
     except Exception as e:
@@ -1816,7 +1840,7 @@ async def confirmar_pedido(client, callback_query: CallbackQuery):
         for admin_id in ADMIN_IDS:
             try:
                 await client.send_message(
-                    admin_id,
+                    int(admin_id) if isinstance(admin_id, str) else admin_id,
                     f"🆕 **NUEVO PEDIDO RECIBIDO**\n\n"
                     f"📋 **ID:** `{pedido_id}`\n"
                     f"👤 **Usuario:** @{callback_query.from_user.username or 'sin_usuario'} ({callback_query.from_user.first_name or 'Sin nombre'})\n"
