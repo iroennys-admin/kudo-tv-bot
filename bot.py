@@ -2236,6 +2236,27 @@ async def ver_referidos_callback(client, callback_query):
 async def start_background_tasks():
     asyncio.create_task(reset_limits_and_check_expiration())
 
+# Health check server for Render (module-level, starts before blocking code)
+def _health_check():
+    import socket
+    PORT = int(os.getenv("PORT", "10000"))
+    resp = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK"
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("0.0.0.0", PORT))
+        s.listen(5)
+        while True:
+            conn, _ = s.accept()
+            conn.recv(1024)
+            conn.sendall(resp)
+            conn.close()
+    except OSError:
+        pass  # port already in use, ignore
+
+import threading
+threading.Thread(target=_health_check, daemon=True).start()
+
 print("Estoy online")
 
 # Iniciar el bot con las tareas en segundo plano
