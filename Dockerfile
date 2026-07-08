@@ -7,6 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV PORT=10000
+RUN chmod +x start.sh
 
-CMD ["python3", "bot.py"]
+CMD ["./start.sh"]
