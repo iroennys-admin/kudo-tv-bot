@@ -5,6 +5,9 @@ import time
 import re
 import random
 import string
+import threading
+import http.server
+import socketserver
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
@@ -2214,9 +2217,6 @@ async def start_background_tasks():
 
 # Health check HTTP server para Render (web service en free tier necesita un puerto)
 def run_health_server():
-    import http.server
-    import socketserver
-
     PORT = int(os.getenv("PORT", "8080"))
 
     class HealthHandler(http.server.BaseHTTPRequestHandler):
@@ -2227,13 +2227,12 @@ def run_health_server():
             self.wfile.write(b"OK")
 
         def log_message(self, format, *args):
-            pass  # silence logs
+            pass
 
     with socketserver.TCPServer(("0.0.0.0", PORT), HealthHandler) as httpd:
         httpd.serve_forever()
 
 
-import threading
 threading.Thread(target=run_health_server, daemon=True).start()
 print("Estoy online")
 
