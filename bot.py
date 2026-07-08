@@ -5,9 +5,6 @@ import time
 import re
 import random
 import string
-import threading
-import http.server
-import socketserver
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
@@ -2215,29 +2212,26 @@ async def ver_referidos_callback(client, callback_query):
 async def start_background_tasks():
     asyncio.create_task(reset_limits_and_check_expiration())
 
-# Health check HTTP server para Render (web service en free tier necesita un puerto)
-def run_health_server():
-    PORT = int(os.getenv("PORT", "8080"))
+async def health_check_server():
+    """Minimal HTTP health check for Render."""
+    PORT = int(os.getenv("PORT", "10000"))
 
-    class HealthHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"OK")
+    async def handle(reader, writer):
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK")
+        await writer.drain()
+        writer.close()
 
-        def log_message(self, format, *args):
-            pass
-
-    with socketserver.TCPServer(("0.0.0.0", PORT), HealthHandler) as httpd:
-        httpd.serve_forever()
+    server = await asyncio.start_server(handle, "0.0.0.0", PORT)
+    logger.info(f"Health check server on port {PORT}")
+    async with server:
+        await server.serve_forever()
 
 
-threading.Thread(target=run_health_server, daemon=True).start()
 print("Estoy online")
 
 # Iniciar el bot con las tareas en segundo plano
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(start_background_tasks())
+    loop.create_task(health_check_server())
     app.run()
